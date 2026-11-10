@@ -1,0 +1,439 @@
+options {
+  STATIC=false;
+}
+
+PARSER_BEGIN(Parser)
+
+package parser;
+
+import ast.*;
+import ast.arithmetics.*;
+import ast.composition.*;
+import ast.control.*;
+import ast.logic.*;
+import ast.identifiers.*;
+import ast.types.*;
+import ast.references.*;
+import datastructures.*;
+import ast.functions.*;
+import types.*;
+import symbols.*;
+import java.util.List;
+import java.util.ArrayList;
+
+public class Parser {
+}
+
+PARSER_END(Parser)
+
+SKIP :
+{
+  " "
+| "\t"
+| "\r"
+}
+
+TOKEN :
+{
+  < Num: (["0"-"9"]) + >
+  |
+  < TYPE_INT : "int" >
+  |
+  < TYPE_BOOL : "bool" >
+  |
+  < TYPE_UNIT: "unit" >
+  |
+  < TYPE_REF: "ref" >
+  |
+  < UNIT: "()" >
+  |
+  < TRUE: "true" >
+  |
+  < FALSE: "false" >
+  |
+  < PLUS : "+" >
+  |
+  < MINUS : "-" >
+  |
+  < TIMES : "*" >
+  |
+  < DIV : "/" >
+  |
+  < LPAR : "(" >
+  |
+  < RPAR : ")" >
+  |
+  < EOL : "\n" >
+  |
+  < AND: "&&" >
+  |
+  < OR: "||" >
+  |
+  < CMP: "==" >
+  |
+  < GE: ">=" >
+  |
+  < LE: "<=" >
+  |
+  < GT: ">" >
+  |
+  < LT: "<" >
+  |
+  < NOTEQ: "!=" >
+  |
+  < NOT: "~" >
+  |
+  < NEW: "new" >
+  |
+  < ASSIGN: ":=" >
+  |
+  < DEREF: "!" >
+  |
+  < EQ: "=">
+  |
+  < LET: "let" >
+  |
+  < IN: "in" >
+  |
+  < COLON: ":" >
+  |
+  < SEMICOLON: ";" >
+  |
+  < COMMA: "," >
+  |
+  < IF: "if" >
+  |
+  < THEN: "then" >
+  |
+  < ELSE: "else" >
+  |
+  < PRINT: "print" >
+  |
+  < PRINTLN: "println" >
+  |
+  < WHILE: "while" >
+  |
+  < DO: "do" >
+  |
+  < END: "end" >
+  |
+  < FUN: "fun" >
+  |
+  < ARROW: "->" >
+  |
+  < Id: ["a"-"z","A"-"Z"] ( ["a"-"z","A"-"Z","0"-"9","_"] )* >
+}
+
+Exp Start():
+{ Exp e; }
+{
+  e = Statements() <EOL>
+  { return e; }
+}
+
+Exp Statements() :
+{ Exp e; List<Exp> sequence = new ArrayList<Exp>(); }
+{
+    e = Statement() { sequence.add(e); }
+    (
+     <SEMICOLON> e = Statement() { sequence.add(e); }
+    )*
+    { return new ASTSequence(sequence); }
+}
+
+Exp Statement() :
+{ Exp e; }
+{
+    (
+     e = ControlStructure()
+    |
+     LOOKAHEAD(2) e = Assignment()
+    |
+     e = Expression()
+    |
+     e = Print()
+    )
+    { return e; }
+}
+
+Exp ControlStructure() :
+{ Exp e; }
+{
+    (
+    e = IfElse()
+    |
+    e = While()
+    )
+    { return e; }
+}
+
+Exp Expression() :
+{ Exp e; }
+{
+    (
+     e = NewReference()
+    |
+     e = Logic()
+    |
+     e = Decl()
+    |
+     e = Fun()
+    )
+    { return e; }
+}
+
+Exp Print():
+{Exp e;}
+{
+    (
+    <PRINT> e = Expression() { e = new ASTPrint(e, false);}
+    |
+    <PRINTLN> e = Expression() { e = new ASTPrint(e, true);}
+    )
+    {return e;}
+}
+
+Exp While():
+{
+    Exp condition, doExp;
+}
+{
+    <WHILE> condition = Expression()
+    <DO> doExp = Statements() <END>
+    { return new ASTWhile(condition, doExp); }
+}
+
+Exp IfElse():
+{
+    Exp condition, thenExp, elseExp = null;
+}
+{
+    <IF> condition = Expression() <THEN> thenExp = Statements()
+    [
+        <ELSE> elseExp = Statements()
+    ]
+    <END>
+    { return new ASTIfThenElse(condition, thenExp, elseExp); }
+}
+
+Exp Decl():
+{
+    Exp e, body;
+    Token t;
+    Type type = null;
+    List<Triple<String, Exp, Type>> bindings = new ArrayList<Triple<String, Exp, Type>>();
+}
+{
+    <LET>
+    (
+     t = <Id> [ <COLON> type = EnhancedType() ]
+     <EQ> e = Expression()
+     { bindings.add(new Triple<String, Exp, Type>(t.image, e, type));}
+    )+
+    <IN> body = Statements() <END>
+    { return new ASTLet(bindings, body); }
+}
+
+Exp Logic():
+{ Exp e1, e2; }
+{
+    (
+        e1 = RelOp()
+        (
+            <AND> e2 = RelOp() { e1 = new ASTAnd(e1, e2); }
+          |
+            <OR> e2 = RelOp() { e1 = new ASTOr(e1, e2); }
+        )*
+        |
+           <NOT> e1 = Logic() { e1 = new ASTNot(e1); }
+    )
+    { return e1; }
+}
+
+Exp RelOp():
+{ Exp e1, e2; }
+{
+    e1 = Expr()
+    (
+        <CMP> e2 = Expr() { e1 = new ASTEq(e1, e2); }
+      |
+        <NOTEQ> e2 = Expr() { e1 = new ASTNot(new ASTEq(e1, e2)); }
+      |
+        <GT> e2 = Expr() { e1 = new ASTGt(e1, e2); }
+      |
+        <LT> e2 = Expr() { e1 = new ASTGt(e2, e1); }
+      |
+        <GE> e2 = Expr() { e1 = new ASTOr(new ASTGt(e1, e2), new ASTEq(e1, e2)); }
+      |
+        <LE> e2 = Expr() { e1 = new ASTOr(new ASTGt(e2, e1), new ASTEq(e1, e2)); }
+    )*
+    { return e1; }
+}
+
+Exp Expr() :
+{ Exp e1, e2; }
+{
+    e1 = Term()
+    (
+        <PLUS> e2 = Term() { e1 = new ASTAdd(e1, e2); }
+      |
+        <MINUS> e2 = Term() { e1 = new ASTSub(e1, e2); }
+    )*
+    { return e1; }
+}
+
+Exp Term() :
+{ Exp e1, e2; }
+{
+    e1 = PseudoExpression()
+    (
+        <TIMES> e2 = PseudoExpression() { e1 = new ASTMult(e1, e2); }
+      |
+        <DIV> e2 = PseudoExpression() { e1 = new ASTDiv(e1, e2); }
+    )*
+    { return e1; }
+}
+
+Exp PseudoExpression() :
+{ Exp e; }
+{
+    e = Fact()
+    [
+     e = GetArgs(e)
+    ]
+    { return e; }
+}
+
+Exp Fact() :
+{ Exp e; }
+{
+    (
+        e = Num()
+      |
+        e = Bool()
+      |
+        e = Id()
+      |
+        e = Unit()
+      |
+        <LPAR> e = Expression() <RPAR>
+      |
+        e = Dereference()
+    )
+    { return e; }
+}
+
+Exp Num() :
+{Exp e; Token t; }
+{
+    (
+        t = <Num> { e = new ASTInt(Integer.parseInt(t.image)); }
+      |
+        <MINUS> t = <Num> { e = new ASTInt(-Integer.parseInt(t.image)); }
+    )
+    { return e; }
+}
+
+Exp Bool() :
+{Token t; }
+{
+    ( t = <TRUE> | t = <FALSE> ) { return new ASTBool(Boolean.parseBoolean(t.image)); }
+}
+
+Exp Id() :
+{Token t; }
+{
+    t = <Id>
+    { return new ASTId(t.image); }
+}
+
+Exp Unit() :
+{}
+{
+    <UNIT> { return new ASTUnit(); }
+}
+
+Type EnhancedType() :
+{
+    List<Type> types = new ArrayList<Type>();
+    Type type = null, returnType = null;
+}
+{
+    <LPAR>
+    (
+       type = SimpleType()
+       { types.add(type); }
+    )*
+    [ <ARROW> returnType = SimpleType() { type = new FunType(types, returnType); }]
+    <RPAR>
+    { return type; }
+}
+
+Type SimpleType() :
+{
+    Type type = null;
+}
+{
+    (
+        <TYPE_INT> { type = IntType.singleton; }
+      |
+        <TYPE_BOOL> { type = BoolType.singleton; }
+      |
+        <TYPE_UNIT> { type = UnitType.singleton; }
+      |
+        <TYPE_REF> type = SimpleType() { type = new RefType(type); }
+    )
+    { return type; }
+}
+
+Exp NewReference() :
+{ Exp e; }
+{
+    <NEW> e = Expression() { return new ASTRef(e); }
+}
+
+Exp Dereference() :
+{ Exp e; }
+{
+    <DEREF> e = Fact() { return new ASTDeref(e); }
+}
+
+Exp Assignment() :
+{ Exp e1, e2; }
+{
+    e1 = Id() <ASSIGN> e2 = Expression() { return new ASTAssignRef(e1, e2); }
+}
+
+Exp Fun() :
+{
+    Token t;
+    Type type;
+    List<Pair<String, Type>> parameters = new ArrayList<Pair<String, Type>>();
+    Exp body;
+}
+{
+    <FUN>
+    (
+        t = <Id> <COLON> type = EnhancedType()
+        { parameters.add(new Pair<String, Type>(t.image, type)); }
+    )+
+    <ARROW> body = Statements() <END>
+    { return new ASTFun(parameters, body); }
+}
+
+Exp GetArgs(Exp func) :
+{
+    Exp arg;
+    List<Exp> arguments = new ArrayList<Exp>();
+}
+{
+    <LPAR>
+    [
+        arg = Expression() { arguments.add(arg); }
+        (
+            <COMMA> arg = Expression() { arguments.add(arg); }
+        )*
+    ]
+    <RPAR>
+    { return new ASTApply(func, arguments); }
+}
